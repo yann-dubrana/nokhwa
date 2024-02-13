@@ -121,47 +121,6 @@ pub mod wmf {
     const MEDIA_FOUNDATION_FIRST_VIDEO_STREAM: u32 = 0xFFFF_FFFC;
     const MF_SOURCE_READER_MEDIASOURCE: u32 = 0xFFFF_FFFF;
 
-    // const CAM_CTRL_AUTO: i32 = 0x0001;
-    // const CAM_CTRL_MANUAL: i32 = 0x0002;
-
-    // macro_rules! define_controls {
-    //     ( $( ($key:expr => ($property:ident, $min:ident, $max:ident, $step:ident, $default:ident, $flag:ident)) )* ) => {
-    //         $(
-    //         $key => {
-    //             if let Err(why) = unsafe {
-    //                     video_proc_amp.GetRange(
-    //                         $property.0,
-    //                         &mut $min,
-    //                         &mut $max,
-    //                         &mut $step,
-    //                         &mut $default,
-    //                         &mut $flag,
-    //                     )
-    //                 } {
-    //                     return Err(NokhwaError::GetPropertyError {
-    //                         property: stringify!($key).to_string(),
-    //                         error: why.to_string()
-    //                     });
-    //                 }
-    //         }
-    //         )*
-    //     };
-    //     ( $( ($key:expr : ($property:ident, $value:ident, $flag:ident)) )* ) => {
-    //         $(
-    //         $key => {
-    //             if let Err(why) = unsafe {
-    //                 video_proc_amp.Get($property.0, &mut $value, &mut $flag)
-    //                 } {
-    //                     return Err(NokhwaError::GetPropertyError {
-    //                         property: stringify!($key).to_string(),
-    //                         error: why.to_string()
-    //                     });
-    //                 }
-    //         }
-    //         )*
-    //     };
-    // }
-
     fn guid_to_frameformat(guid: GUID) -> Option<FrameFormat> {
         match guid {
             MF_VIDEO_FORMAT_NV12 => Some(FrameFormat::NV12),
@@ -522,32 +481,7 @@ pub mod wmf {
                 }
             }
         }
-        //
-        // pub fn with_string(unique_id: &[u16]) -> Result<Self, NokhwaError> {
-        //     let devicelist = query_media_foundation_descriptors()?;
-        //     let mut id_eq = None;
-        //
-        //     for mfdev in devicelist {
-        //         if (mfdev.symlink() as &[u16]) == unique_id {
-        //             id_eq = Some(mfdev.index().as_index()?);
-        //             break;
-        //         }
-        //     }
-        //
-        //     match id_eq {
-        //         Some(index) => Self::new(index),
-        //         None => {
-        //             return Err(BindingError::DeviceOpenFailError(
-        //                 std::str::from_utf8(
-        //                     &unique_id.iter().map(|x| *x as u8).collect::<Vec<u8>>(),
-        //                 )
-        //                 .unwrap_or("")
-        //                 .to_string(),
-        //                 "Not Found".to_string(),
-        //             ))
-        //         }
-        //     }
-        // }
+
 
         pub fn index(&self) -> &CameraIndex {
             self.device_specifier.index()
@@ -579,6 +513,7 @@ pub mod wmf {
                     }
                 };
 
+
                 let (width, height) = match unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE) } {
                     Ok(res_u64) => {
                         let width = (res_u64 >> 32) as u32;
@@ -596,50 +531,29 @@ pub mod wmf {
                 // MFRatio is represented as 2 u32s in memory. This means we cann convert it to 2
                 let framerate_list = {
                     let mut framerates = vec![0_u32; 3];
-                    if let Ok(fraction_u64) =
-                        unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE_RANGE_MAX) }
-                    {
-                        let mut numerator = (fraction_u64 >> 32) as u32;
-                        let denominator = fraction_u64 as u32;
-                        if denominator != 1 {
-                            numerator = 0;
-                        }
-                        framerates.push(numerator);
-                    };
-                    if let Ok(fraction_u64) =
-                        unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE_RANGE_MAX) }
-                    {
-                        let mut numerator = (fraction_u64 >> 32) as u32;
-                        let denominator = fraction_u64 as u32;
-                        if denominator != 1 {
-                            numerator = 0;
-                        }
-                        framerates.push(numerator);
-                    };
-                    if let Ok(fraction_u64) = unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE) } {
-                        let mut numerator = (fraction_u64 >> 32) as u32;
-                        let denominator = fraction_u64 as u32;
-                        if denominator != 1 {
-                            numerator = 0;
-                        }
-                        framerates.push(numerator);
-                    };
-                    if let Ok(fraction_u64) =
-                        unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE_RANGE_MIN) }
-                    {
-                        let mut numerator = (fraction_u64 >> 32) as u32;
-                        let denominator = fraction_u64 as u32;
-                        if denominator != 1 {
-                            numerator = 0;
-                        }
-                        framerates.push(numerator);
-                    };
+                    let windows_types = [
+                        MF_MT_FRAME_RATE_RANGE_MAX,
+                        MF_MT_FRAME_RATE,
+                        MF_MT_FRAME_RATE_RANGE_MIN,
+                    ];
+
+                    for (i, windows_type) in windows_types.iter().enumerate() {
+                        if let Ok(fraction_u64) = unsafe { media_type.GetUINT64(windows_type) } {
+                            let mut numerator = (fraction_u64 >> 32) as u32;
+                            let mut denominator = fraction_u64 as u32;
+                            framerates[i] = numerator / denominator;
+                        };
+                    }
                     framerates
                 };
 
+
                 let frame_fmt = match guid_to_frameformat(fourcc) {
                     Some(fcc) => fcc,
-                    None => continue,
+                    None => {
+                        index += 1;
+                        continue
+                    },
                 };
 
                 for frame_rate in framerate_list {
