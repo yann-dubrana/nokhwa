@@ -539,8 +539,8 @@ pub mod wmf {
 
                     for (i, windows_type) in windows_types.iter().enumerate() {
                         if let Ok(fraction_u64) = unsafe { media_type.GetUINT64(windows_type) } {
-                            let mut numerator = (fraction_u64 >> 32) as u32;
-                            let mut denominator = fraction_u64 as u32;
+                            let numerator = (fraction_u64 >> 32) as u32;
+                            let denominator = fraction_u64 as u32;
                             framerates[i] = numerator / denominator;
                         };
                     }
