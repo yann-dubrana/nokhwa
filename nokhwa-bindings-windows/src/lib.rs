@@ -29,6 +29,7 @@
 
 #[cfg(all(windows, not(feature = "docs-only")))]
 pub mod wmf {
+    use nokhwa_core::types::FrameRate;
     use nokhwa_core::error::NokhwaError;
     use nokhwa_core::types::{
         ApiBackend, CameraControl, CameraFormat, CameraIndex, CameraInfo, ControlValueDescription,
@@ -45,6 +46,7 @@ pub mod wmf {
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
+        collections::HashSet,
     };
     use windows::Win32::Media::DirectShow::{CameraControl_Flags_Auto, CameraControl_Flags_Manual};
     use windows::Win32::Media::MediaFoundation::{
@@ -314,7 +316,7 @@ pub mod wmf {
             &name,
             "MediaFoundation Camera",
             &symlink,
-            index,
+            &index,
         ))
     }
 
@@ -395,7 +397,7 @@ pub mod wmf {
                                         return Err(NokhwaError::OpenDeviceError(
                                             index.to_string(),
                                             why.to_string(),
-                                        ))
+                                        ));
                                     }
                                 }
                             }
@@ -403,7 +405,7 @@ pub mod wmf {
                                 return Err(NokhwaError::OpenDeviceError(
                                     index.to_string(),
                                     "No device".to_string(),
-                                ))
+                                ));
                             }
                         };
 
@@ -449,7 +451,7 @@ pub mod wmf {
                             return Err(NokhwaError::StructureError {
                                 structure: "MFCreateSourceReaderFromMediaSource".to_string(),
                                 error: why.to_string(),
-                            })
+                            });
                         }
                     };
 
@@ -509,7 +511,7 @@ pub mod wmf {
                         return Err(NokhwaError::GetPropertyError {
                             property: "MF_MT_SUBTYPE".to_string(),
                             error: why.to_string(),
-                        })
+                        });
                     }
                 };
 
@@ -524,13 +526,13 @@ pub mod wmf {
                         return Err(NokhwaError::GetPropertyError {
                             property: "MF_MT_FRAME_SIZE".to_string(),
                             error: why.to_string(),
-                        })
+                        });
                     }
                 };
 
                 // MFRatio is represented as 2 u32s in memory. This means we cann convert it to 2
-                let framerate_list = {
-                    let mut framerates = vec![0_u32; 3];
+                let mut framerates = {
+                    let mut framerates = Vec::new();
                     let windows_types = [
                         MF_MT_FRAME_RATE_RANGE_MAX,
                         MF_MT_FRAME_RATE,
@@ -538,32 +540,34 @@ pub mod wmf {
                     ];
 
                     for (i, windows_type) in windows_types.iter().enumerate() {
-                        if let Ok(fraction_u64) = unsafe { media_type.GetUINT64(windows_type) } {
-                            let numerator = (fraction_u64 >> 32) as u32;
-                            let denominator = fraction_u64 as u32;
-                            framerates[i] = numerator / denominator;
+                        if let Ok(windows_pointer) = unsafe { media_type.GetUINT64(windows_type) } {
+                            let numerator = (windows_pointer >> 32) as u32;
+                            let denominator = windows_pointer as u32;
+                            if numerator > 1 {
+                                framerates.push(FrameRate::Fraction { windows_pointer, numerator, denominator })
+                            }
                         };
                     }
                     framerates
                 };
 
+                let unique_framerates: HashSet<FrameRate> = framerates.into_iter().collect();
+                framerates = unique_framerates.into_iter().collect();
 
-                let frame_fmt = match guid_to_frameformat(fourcc) {
+                let frame_formats = match guid_to_frameformat(fourcc) {
                     Some(fcc) => fcc,
                     None => {
                         index += 1;
-                        continue
-                    },
+                        continue;
+                    }
                 };
 
-                for frame_rate in framerate_list {
-                    if frame_rate != 0 {
-                        camera_format_list.push(CameraFormat::new(
-                            Resolution::new(width, height),
-                            frame_fmt,
-                            frame_rate,
-                        ));
-                    }
+                for framerate in framerates {
+                    camera_format_list.push(CameraFormat::new(
+                        Resolution::new(width, height),
+                        frame_formats,
+                        framerate,
+                    ));
                 }
 
                 index += 1;
@@ -808,7 +812,7 @@ pub mod wmf {
                     return Err(NokhwaError::StructureError {
                         structure: format!("ControlValueSetter {}", v),
                         error: "invalid value type".to_string(),
-                    })
+                    });
                 }
             };
 
@@ -872,17 +876,22 @@ pub mod wmf {
                             return Err(NokhwaError::GetPropertyError {
                                 property: "MF_MT_FRAME_SIZE".to_string(),
                                 error: why.to_string(),
-                            })
+                            });
                         }
                     };
 
                     let frame_rate = match unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE) } {
-                        Ok(fps) => fps as u32,
+                        Ok(fps) => {
+                            let windows_pointer = fps.clone();
+                            let numerator = (fps >> 32) as u32;
+                            let denominator = fps as u32;
+                            FrameRate::Fraction { windows_pointer, numerator, denominator }
+                        }
                         Err(why) => {
                             return Err(NokhwaError::GetPropertyError {
                                 property: "MF_MT_FRAME_RATE".to_string(),
                                 error: why.to_string(),
-                            })
+                            });
                         }
                     };
 
@@ -893,14 +902,14 @@ pub mod wmf {
                                 return Err(NokhwaError::GetPropertyError {
                                     property: "MF_MT_SUBTYPE".to_string(),
                                     error: "Unknown".to_string(),
-                                })
+                                });
                             }
                         },
                         Err(why) => {
                             return Err(NokhwaError::GetPropertyError {
                                 property: "MF_MT_SUBTYPE".to_string(),
                                 error: why.to_string(),
-                            })
+                            });
                         }
                     };
 
@@ -928,19 +937,36 @@ pub mod wmf {
                     return Err(NokhwaError::StructureError {
                         structure: "IMFMediaType".to_string(),
                         error: why.to_string(),
-                    })
+                    });
                 }
             };
 
             // set relevant things
             let resolution = (u64::from(format.resolution().width_x) << 32_u64)
                 + u64::from(format.resolution().height_y);
+
             let fps = {
                 let frame_rate_u64 = 0_u64;
+                let mut native: u64 = 0;
                 let mut bytes: [u8; 8] = frame_rate_u64.to_le_bytes();
-                bytes[7] = format.frame_rate() as u8;
-                bytes[3] = 0x01;
-                u64::from_le_bytes(bytes)
+                match format.frame_rate() {
+                    FrameRate::Fraction { windows_pointer, numerator, denominator } => {
+                        native = windows_pointer;
+                    }
+                    FrameRate::Integer(fps) => {
+                        bytes[4] = fps as u8;
+                        bytes[0] = 0x01;
+                    }
+                    FrameRate::Float(fps) => {
+                        bytes[4] = fps as u8;
+                        bytes[0] = 0x01;
+                    }
+                }
+
+                if native == 0 {
+                    native = u64::from_le_bytes(bytes)
+                }
+                native
             };
             let fourcc = frameformat_to_guid(format.format());
             // setting to the new media_type
@@ -1116,7 +1142,7 @@ pub mod wmf {
                 }
                 if CAMERA_REFCNT.load(Ordering::SeqCst) == 0 {
                     #[allow(clippy::let_underscore_drop)]
-                    let _ = de_initialize_mf();
+                        let _ = de_initialize_mf();
                 }
             }
         }

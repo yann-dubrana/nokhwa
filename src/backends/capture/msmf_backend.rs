@@ -17,15 +17,15 @@ use nokhwa_bindings_windows::wmf::MediaFoundationDevice;
 use nokhwa_core::{
     buffer::Buffer,
     error::NokhwaError,
-    pixel_format::RgbFormat,
     traits::CaptureBackendTrait,
     types::{
         all_known_camera_controls, ApiBackend, CameraControl, CameraFormat, CameraIndex,
         CameraInfo, ControlValueSetter, FrameFormat, KnownCameraControl, RequestedFormat,
-        RequestedFormatType, Resolution,
-    },
+        Resolution,
+    }
 };
 use std::{borrow::Cow, collections::HashMap};
+use nokhwa_core::types::FrameRate;
 
 /// The backend that deals with Media Foundation on Windows.
 /// To see what this does, please see [`CaptureBackendTrait`].
@@ -54,13 +54,15 @@ impl MediaFoundationCaptureDevice {
             &mf_device.name(),
             "MediaFoundation Camera Device",
             &mf_device.symlink(),
-            index.clone(),
+            index,
         );
 
-        let availible = mf_device.compatible_format_list()?;
+        let available = mf_device.compatible_format_list()?;
+
+        println!("Available formats: {:?}", available);
 
         let desired = camera_fmt
-            .fulfill(&availible)
+            .fulfill(&available)
             .ok_or(NokhwaError::InitializeError {
                 backend: ApiBackend::MediaFoundation,
                 error: "Failed to fulfill requested format".to_string(),
@@ -74,23 +76,6 @@ impl MediaFoundationCaptureDevice {
         };
         new_cam.refresh_camera_format()?;
         Ok(new_cam)
-    }
-
-    /// Create a new Media Foundation Device with desired settings.
-    /// # Errors
-    /// This function will error if Media Foundation fails to get the device.
-    #[deprecated(since = "0.10.0", note = "please use `new` instead.")]
-    pub fn new_with(
-        index: &CameraIndex,
-        width: u32,
-        height: u32,
-        fps: u32,
-        fourcc: FrameFormat,
-    ) -> Result<Self, NokhwaError> {
-        let camera_format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(
-            CameraFormat::new_from(width, height, fourcc, fps),
-        ));
-        MediaFoundationCaptureDevice::new(index, camera_format)
     }
 
     /// Gets the list of supported [`KnownCameraControl`]s
@@ -133,9 +118,9 @@ impl CaptureBackendTrait for MediaFoundationCaptureDevice {
     fn compatible_list_by_resolution(
         &mut self,
         fourcc: FrameFormat,
-    ) -> Result<HashMap<Resolution, Vec<u32>>, NokhwaError> {
+    ) -> Result<HashMap<Resolution, Vec<FrameRate>>, NokhwaError> {
         let mf_camera_format_list = self.inner.compatible_format_list()?;
-        let mut resolution_map: HashMap<Resolution, Vec<u32>> = HashMap::new();
+        let mut resolution_map: HashMap<Resolution, Vec<FrameRate>> = HashMap::new();
 
         for camera_format in mf_camera_format_list {
             // check fcc
@@ -187,11 +172,11 @@ impl CaptureBackendTrait for MediaFoundationCaptureDevice {
         self.set_camera_format(new_format)
     }
 
-    fn frame_rate(&self) -> u32 {
+    fn frame_rate(&self) -> FrameRate {
         self.camera_format().frame_rate()
     }
 
-    fn set_frame_rate(&mut self, new_fps: u32) -> Result<(), NokhwaError> {
+    fn set_frame_rate(&mut self, new_fps: FrameRate) -> Result<(), NokhwaError> {
         let mut new_format = self.camera_format();
         new_format.set_frame_rate(new_fps);
         self.set_camera_format(new_format)

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use nokhwa_core::types::RequestedFormatType;
+use nokhwa_core::types::{FrameRate, RequestedFormatType};
 use nokhwa_core::{
     buffer::Buffer,
     error::NokhwaError,
@@ -59,26 +59,6 @@ impl Camera {
             api: backend,
             device: camera_backend,
         })
-    }
-
-    /// Create a new `Camera` from raw values.
-    /// # Errors
-    /// This will error if you either have a bad platform configuration (e.g. `input-v4l` but not on linux) or the backend cannot create the camera (e.g. permission denied).
-    #[deprecated(since = "0.10.0", note = "please use `new` instead.")]
-    pub fn new_with(
-        index: CameraIndex,
-        width: u32,
-        height: u32,
-        fps: u32,
-        fourcc: FrameFormat,
-        backend: ApiBackend,
-    ) -> Result<Self, NokhwaError> {
-        let camera_format = CameraFormat::new_from(width, height, fourcc, fps);
-        Camera::with_backend(
-            index,
-            RequestedFormat::with_formats(RequestedFormatType::Exact(camera_format), &[fourcc]),
-            backend,
-        )
     }
 
     /// Allows creation of a [`Camera`] with a custom backend. This is useful if you are creating e.g. a custom module.
@@ -199,7 +179,7 @@ impl Camera {
     pub fn compatible_list_by_resolution(
         &mut self,
         fourcc: FrameFormat,
-    ) -> Result<HashMap<Resolution, Vec<u32>>, NokhwaError> {
+    ) -> Result<HashMap<Resolution, Vec<FrameRate>>, NokhwaError> {
         self.device.compatible_list_by_resolution(fourcc)
     }
 
@@ -235,7 +215,7 @@ impl Camera {
 
     /// Gets the current camera framerate (See: [`CameraFormat`]).
     #[must_use]
-    pub fn frame_rate(&self) -> u32 {
+    pub fn frame_rate(&self) -> FrameRate {
         self.device.frame_rate()
     }
 
@@ -245,7 +225,7 @@ impl Camera {
     /// This will also update the cache.
     /// # Errors
     /// If you started the stream and the camera rejects the new framerate, this will return an error.
-    pub fn set_frame_rate(&mut self, new_fps: u32) -> Result<(), NokhwaError> {
+    pub fn set_frame_rate(&mut self, new_fps: FrameRate) -> Result<(), NokhwaError> {
         self.device.set_frame_rate(new_fps)
     }
 

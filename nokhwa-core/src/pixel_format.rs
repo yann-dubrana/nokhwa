@@ -57,7 +57,7 @@ pub struct RgbFormat;
 
 impl FormatDecoder for RgbFormat {
     type Output = Rgb<u8>;
-    const FORMATS: &'static [FrameFormat] = color_frame_formats();
+    const FORMATS: &'static [FrameFormat] = frame_formats();
 
     #[inline]
     fn write_output(
@@ -128,7 +128,7 @@ pub struct RgbAFormat;
 impl FormatDecoder for RgbAFormat {
     type Output = Rgba<u8>;
 
-    const FORMATS: &'static [FrameFormat] = color_frame_formats();
+    const FORMATS: &'static [FrameFormat] = frame_formats();
 
     #[inline]
     fn write_output(

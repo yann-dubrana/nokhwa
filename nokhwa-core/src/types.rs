@@ -7,6 +7,7 @@ use std::{
     fmt::{Display, Formatter},
     str::FromStr,
 };
+use std::hash::{Hash, Hasher};
 
 /// Tells the init function what camera format to pick.
 /// - `AbsoluteHighestResolution`: Pick the highest [`Resolution`], then pick the highest frame rate of those provided.
@@ -77,40 +78,51 @@ impl RequestedFormat<'_> {
         self.requested_format
     }
 
+
     /// Fulfill the requested using a list of all available formats.
-    ///
+    /// Find the highest resolution, then highest frame rate.
+    fn fulfill_absolute_highest_resolution(&self, all_formats: &[CameraFormat]) -> Option<CameraFormat> {
+        let mut formats = all_formats.to_vec();
+        formats.sort_by_key(CameraFormat::resolution);
+        let resolution = *formats.iter().last()?;
+        let mut format_resolutions = formats
+            .into_iter()
+            .filter(|fmt| {
+                fmt.resolution() == resolution.resolution()
+                    && self.wanted_decoder.contains(&fmt.format())
+            })
+            .collect::<Vec<CameraFormat>>();
+        format_resolutions.sort_by_key(CameraFormat::frame_rate);
+        format_resolutions.last().copied()
+    }
+
+    // Find Highest frame rate, then highest resolution
+    fn fulfill_absolute_highest_frame_rate(&self, all_formats: &[CameraFormat]) -> Option<CameraFormat> {
+        let mut formats = all_formats.to_vec();
+        formats.sort_by_key(CameraFormat::frame_rate);
+        let frame_rate = *formats.iter().last()?;
+        let mut format_framerates = formats
+            .into_iter()
+            .filter(|fmt| {
+                fmt.frame_rate().as_u32() == frame_rate.frame_rate().as_u32()
+                    && self.wanted_decoder.contains(&fmt.format())
+            })
+            .collect::<Vec<CameraFormat>>();
+        format_framerates.sort_by_key(CameraFormat::resolution);
+        format_framerates.last().copied()
+    }
+
+
     /// See [`RequestedFormatType`] for more details.
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn fulfill(&self, all_formats: &[CameraFormat]) -> Option<CameraFormat> {
         match self.requested_format {
             RequestedFormatType::AbsoluteHighestResolution => {
-                let mut formats = all_formats.to_vec();
-                formats.sort_by_key(CameraFormat::resolution);
-                let resolution = *formats.iter().last()?;
-                let mut format_resolutions = formats
-                    .into_iter()
-                    .filter(|fmt| {
-                        fmt.resolution() == resolution.resolution()
-                            && self.wanted_decoder.contains(&fmt.format())
-                    })
-                    .collect::<Vec<CameraFormat>>();
-                format_resolutions.sort_by_key(CameraFormat::frame_rate);
-                format_resolutions.last().copied()
+                self.fulfill_absolute_highest_resolution(all_formats)
             }
             RequestedFormatType::AbsoluteHighestFrameRate => {
-                let mut formats = all_formats.to_vec();
-                formats.sort_by_key(CameraFormat::frame_rate);
-                let frame_rate = *formats.iter().last()?;
-                let mut format_framerates = formats
-                    .into_iter()
-                    .filter(|fmt| {
-                        fmt.frame_rate() == frame_rate.frame_rate()
-                            && self.wanted_decoder.contains(&fmt.format())
-                    })
-                    .collect::<Vec<CameraFormat>>();
-                format_framerates.sort_by_key(CameraFormat::resolution);
-                format_framerates.last().copied()
+                self.fulfill_absolute_highest_frame_rate(all_formats)
             }
             RequestedFormatType::HighestResolution(res) => {
                 let mut formats = all_formats
@@ -131,7 +143,7 @@ impl RequestedFormat<'_> {
             RequestedFormatType::HighestFrameRate(fps) => {
                 let mut formats = all_formats
                     .iter()
-                    .filter(|x| x.frame_rate == fps)
+                    .filter(|x| x.frame_rate == FrameRate::Integer(fps))
                     .copied()
                     .collect::<Vec<CameraFormat>>();
                 formats.sort_by(|a, b| a.resolution.cmp(&b.resolution));
@@ -178,7 +190,7 @@ impl RequestedFormat<'_> {
                     .iter()
                     .filter_map(|cfmt| {
                         if cfmt.format() == c.format() && cfmt.resolution() == c.resolution() {
-                            return Some(cfmt.frame_rate());
+                            return Some(cfmt.frame_rate().as_u32());
                         }
                         None
                     })
@@ -187,13 +199,13 @@ impl RequestedFormat<'_> {
                 let mut framerate_map = frame_rates
                     .iter()
                     .map(|x| {
-                        let abs = *x as i32 - c.frame_rate() as i32;
+                        let abs = *x as i32 - c.frame_rate().as_u32() as i32;
                         (abs.unsigned_abs(), *x)
                     })
                     .collect::<Vec<(u32, u32)>>();
                 framerate_map.sort_by(|a, b| a.0.cmp(&b.0));
                 let frame_rate = framerate_map.first()?.1;
-                Some(CameraFormat::new(resolution, c.format(), frame_rate))
+                Some(CameraFormat::new(resolution, c.format(), FrameRate::Integer(frame_rate)))
             }
             RequestedFormatType::None => all_formats
                 .iter()
@@ -322,6 +334,7 @@ impl Display for FrameFormat {
         }
     }
 }
+
 impl FromStr for FrameFormat {
     type Err = NokhwaError;
 
@@ -449,6 +462,135 @@ impl Ord for Resolution {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+/// The frame rate of a camera.
+pub enum FrameRate {
+    /// The driver reports the frame rate as a clean integer (e.g. 30 FPS).
+    Integer(u32),
+    /// The driver reports the frame rate as a floating point number (e.g. 29.97 FPS)
+    Float(f32),
+    /// The driver reports the frame rate as a fraction (e.g. 2997/1000 FPS)
+    Fraction {
+        windows_pointer: u64,
+        numerator: u32,
+        denominator: u32,
+    },
+}
+
+impl FrameRate {
+    pub fn new_integer(fps: u32) -> Self {
+        FrameRate::Integer(fps)
+    }
+
+    pub fn new_float(fps: f32) -> Self {
+        FrameRate::Float(fps)
+    }
+
+    pub fn new_fraction(windows_pointer: u64, numerator: u32, denominator: u32) -> Self {
+        FrameRate::Fraction {
+            windows_pointer,
+            numerator,
+            denominator,
+        }
+    }
+
+    pub fn as_float(&self) -> f32 {
+        match self {
+            FrameRate::Integer(fps) => *fps as f32,
+            FrameRate::Float(fps) => *fps,
+            FrameRate::Fraction { windows_pointer, numerator, denominator } => (*numerator as f32) / (*denominator as f32)
+        }
+    }
+
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            FrameRate::Integer(fps) => *fps,
+            FrameRate::Float(fps) => *fps as u32,
+            FrameRate::Fraction { windows_pointer, numerator, denominator } => (*numerator / *denominator).into(),
+        }
+    }
+}
+
+impl Default for FrameRate {
+    fn default() -> Self {
+        FrameRate::Integer(30)
+    }
+}
+
+impl Hash for FrameRate {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            FrameRate::Integer(fps) => fps.hash(state),
+            FrameRate::Float(fps) => fps.to_bits().hash(state),
+            FrameRate::Fraction { windows_pointer, numerator, denominator } => {
+                windows_pointer.hash(state);
+                numerator.hash(state);
+                denominator.hash(state);
+            }
+        }
+    }
+}
+
+impl PartialEq for FrameRate {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_float() == other.as_float()
+    }
+}
+
+impl Eq for FrameRate {}
+
+impl PartialOrd for FrameRate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let this_float = self.as_float();
+        let other = other.as_float();
+        this_float.partial_cmp(&other)
+    }
+}
+
+impl Ord for FrameRate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let this_float = self.as_float();
+        let other = other.as_float();
+        this_float.total_cmp(&other)
+    }
+}
+
+impl Display for FrameRate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameRate::Integer(fps) => write!(f, "Framerate: {fps} FPS"),
+            FrameRate::Float(fps) => write!(f, "Framerate: {fps} FPS"),
+            FrameRate::Fraction { .. } => {
+                let as_float = self.as_float();
+                write!(f, "Framerate: {as_float} FPS")
+            }
+        }
+    }
+}
+
+impl From<u32> for FrameRate {
+    fn from(value: u32) -> Self {
+        FrameRate::Integer(value)
+    }
+}
+
+impl From<f32> for FrameRate {
+    fn from(value: f32) -> Self {
+        FrameRate::Float(value)
+    }
+}
+
+impl From<(u64, u32, u32)> for FrameRate {
+    fn from(value: (u64, u32, u32)) -> Self {
+        FrameRate::Fraction {
+            windows_pointer: value.0,
+            numerator: value.1,
+            denominator: value.2,
+        }
+    }
+}
+
 /// This is a convenience struct that holds all information about the format of a webcam stream.
 /// It consists of a [`Resolution`], [`FrameFormat`], and a frame rate(u8).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -456,13 +598,13 @@ impl Ord for Resolution {
 pub struct CameraFormat {
     resolution: Resolution,
     format: FrameFormat,
-    frame_rate: u32,
+    frame_rate: FrameRate,
 }
 
 impl CameraFormat {
     /// Construct a new [`CameraFormat`]
     #[must_use]
-    pub fn new(resolution: Resolution, format: FrameFormat, frame_rate: u32) -> Self {
+    pub fn new(resolution: Resolution, format: FrameFormat, frame_rate: FrameRate) -> Self {
         CameraFormat {
             resolution,
             format,
@@ -472,7 +614,7 @@ impl CameraFormat {
 
     /// [`CameraFormat::new()`], but raw.
     #[must_use]
-    pub fn new_from(res_x: u32, res_y: u32, format: FrameFormat, fps: u32) -> Self {
+    pub fn new_from(res_x: u32, res_y: u32, format: FrameFormat, fps: FrameRate) -> Self {
         CameraFormat {
             resolution: Resolution {
                 width_x: res_x,
@@ -508,12 +650,12 @@ impl CameraFormat {
 
     /// Get the frame rate of the current [`CameraFormat`]
     #[must_use]
-    pub fn frame_rate(&self) -> u32 {
+    pub fn frame_rate(&self) -> FrameRate {
         self.frame_rate
     }
 
     /// Set the [`CameraFormat`]'s frame rate.
-    pub fn set_frame_rate(&mut self, frame_rate: u32) {
+    pub fn set_frame_rate(&mut self, frame_rate: FrameRate) {
         self.frame_rate = frame_rate;
     }
 
@@ -534,7 +676,7 @@ impl Default for CameraFormat {
         CameraFormat {
             resolution: Resolution::new(640, 480),
             format: FrameFormat::MJPEG,
-            frame_rate: 30,
+            frame_rate: FrameRate::Integer(30),
         }
     }
 }
@@ -572,12 +714,12 @@ impl CameraInfo {
     // OK, i just checkeed back on this code. WTF was I on when I wrote `&(impl AsRef<str> + ?Sized)` ????
     // I need to get on the same shit that my previous self was on, because holy shit that stuff is strong as FUCK!
     // Finally fixed this insanity. Hopefully I didnt torment anyone by actually putting this in a stable release.
-    pub fn new(human_name: &str, description: &str, misc: &str, index: CameraIndex) -> Self {
+    pub fn new(human_name: &str, description: &str, misc: &str, index: &CameraIndex) -> Self {
         CameraInfo {
             human_name: human_name.to_string(),
             description: description.to_string(),
             misc: misc.to_string(),
-            index,
+            index: index.clone(),
         }
     }
 
@@ -689,7 +831,7 @@ impl Display for CameraInfo {
 
 /// The list of known camera controls to the library. <br>
 /// These can control the picture brightness, etc. <br>
-/// Note that not all backends/devices support all these. Run [`supported_camera_controls()`](crate::traits::CaptureBackendTrait::camera_controls) to see which ones can be set.
+/// Note that not all backends/devices support all these. Run [`supported_camera_controls()`](crate::traits::CaptureTrait::camera_controls) to see which ones can be set.
 #[derive(Copy, Clone, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub enum KnownCameraControl {
@@ -733,7 +875,7 @@ pub const fn all_known_camera_controls() -> [KnownCameraControl; 15] {
         KnownCameraControl::Zoom,
         KnownCameraControl::Exposure,
         KnownCameraControl::Iris,
-        KnownCameraControl::Focus,
+        KnownCameraControl::Focus
     ]
 }
 
@@ -825,6 +967,10 @@ pub enum ControlValueDescription {
         max: (f64, f64, f64),
         default: (f64, f64, f64),
     },
+    StringList {
+        value: String,
+        availible: Vec<String>,
+    },
 }
 
 impl ControlValueDescription {
@@ -858,10 +1004,13 @@ impl ControlValueDescription {
             ControlValueDescription::RGB { value, .. } => {
                 ControlValueSetter::RGB(value.0, value.1, value.2)
             }
+            ControlValueDescription::StringList { value, .. } => {
+                ControlValueSetter::StringList(value.clone())
+            }
         }
     }
 
-    /// Verifies if the [setter](crate::types::ControlValueSetter) is valid for the provided [`ControlValueDescription`].
+    /// Verifies if the [setter](ControlValueSetter) is valid for the provided [`ControlValueDescription`].
     /// - `true` => Is valid.
     /// - `false` => Is not valid.
     ///
@@ -953,76 +1102,11 @@ impl ControlValueDescription {
                 Some(v) => *v.0 >= max.0 && *v.1 >= max.1 && *v.2 >= max.2,
                 None => false,
             },
+            ControlValueDescription::StringList { value, availible } => match setter.as_str() {
+                Some(e) => e.contains(value),
+                None => false,
+            }
         }
-
-        // match setter {
-        //     ControlValueSetter::None => {
-        //         matches!(self, ControlValueDescription::None)
-        //     }
-        //     ControlValueSetter::Integer(i) => match self {
-        //         ControlValueDescription::Integer {
-        //             value,
-        //             default,
-        //             step,
-        //         } => (i - default).abs() % step == 0 || (i - value) % step == 0,
-        //         ControlValueDescription::IntegerRange {
-        //             min,
-        //             max,
-        //             value,
-        //             step,
-        //             default,
-        //         } => {
-        //             if value > max || value < min {
-        //                 return false;
-        //             }
-        //
-        //             (i - default) % step == 0 || (i - value) % step == 0
-        //         }
-        //         _ => false,
-        //     },
-        //     ControlValueSetter::Float(f) => match self {
-        //         ControlValueDescription::Float {
-        //             value,
-        //             default,
-        //             step,
-        //         } => (f - default).abs() % step == 0_f64 || (f - value) % step == 0_f64,
-        //         ControlValueDescription::FloatRange {
-        //             min,
-        //             max,
-        //             value,
-        //             step,
-        //             default,
-        //         } => {
-        //             if value > max || value < min {
-        //                 return false;
-        //             }
-        //
-        //             (f - default) % step == 0_f64 || (f - value) % step == 0_f64
-        //         }
-        //         _ => false,
-        //     },
-        //     ControlValueSetter::Boolean(b) => {
-        //
-        //     }
-        //     ControlValueSetter::String(_) => {
-        //         matches!(self, ControlValueDescription::String { .. })
-        //     }
-        //     ControlValueSetter::Bytes(_) => {
-        //         matches!(self, ControlValueDescription::Bytes { .. })
-        //     }
-        //     ControlValueSetter::KeyValue(_, _) => {
-        //         matches!(self, ControlValueDescription::KeyValuePair { .. })
-        //     }
-        //     ControlValueSetter::Point(_, _) => {
-        //         matches!(self, ControlValueDescription::Point { .. })
-        //     }
-        //     ControlValueSetter::EnumValue(_) => {
-        //         matches!(self, ControlValueDescription::Enum { .. })
-        //     }
-        //     ControlValueSetter::RGB(_, _, _) => {
-        //         matches!(self, ControlValueDescription::RGB { .. })
-        //     }
-        // }
     }
 }
 
@@ -1037,7 +1121,7 @@ impl Display for ControlValueDescription {
                 default,
                 step,
             } => {
-                write!(f, "(Current: {value}, Default: {default}, Step: {step})",)
+                write!(f, "(Current: {value}, Default: {default}, Step: {step})", )
             }
             ControlValueDescription::IntegerRange {
                 min,
@@ -1056,7 +1140,7 @@ impl Display for ControlValueDescription {
                 default,
                 step,
             } => {
-                write!(f, "(Current: {value}, Default: {default}, Step: {step})",)
+                write!(f, "(Current: {value}, Default: {default}, Step: {step})", )
             }
             ControlValueDescription::FloatRange {
                 min,
@@ -1117,6 +1201,9 @@ impl Display for ControlValueDescription {
                     "Current: ({}, {}, {}), Max: ({}, {}, {}), Default: ({}, {}, {})",
                     value.0, value.1, value.2, max.0, max.1, max.2, default.0, default.1, default.2
                 )
+            }
+            ControlValueDescription::StringList { value, availible } => {
+                write!(f, "Current: {value}, Availible: {availible:?}")
             }
         }
     }
@@ -1236,6 +1323,7 @@ pub enum ControlValueSetter {
     Point(f64, f64),
     EnumValue(i64),
     RGB(f64, f64, f64),
+    StringList(String),
 }
 
 impl ControlValueSetter {
@@ -1248,7 +1336,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_integer(&self) -> Option<&i64> {
         if let ControlValueSetter::Integer(i) = self {
             Some(i)
@@ -1257,7 +1344,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_float(&self) -> Option<&f64> {
         if let ControlValueSetter::Float(f) = self {
             Some(f)
@@ -1266,7 +1352,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_boolean(&self) -> Option<&bool> {
         if let ControlValueSetter::Boolean(f) = self {
             Some(f)
@@ -1275,7 +1360,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_str(&self) -> Option<&str> {
         if let ControlValueSetter::String(s) = self {
             Some(s)
@@ -1284,7 +1368,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_bytes(&self) -> Option<&[u8]> {
         if let ControlValueSetter::Bytes(b) = self {
             Some(b)
@@ -1293,7 +1376,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_key_value(&self) -> Option<(&i128, &i128)> {
         if let ControlValueSetter::KeyValue(k, v) = self {
             Some((k, v))
@@ -1302,7 +1384,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_point(&self) -> Option<(&f64, &f64)> {
         if let ControlValueSetter::Point(x, y) = self {
             Some((x, y))
@@ -1311,7 +1392,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_enum(&self) -> Option<&i64> {
         if let ControlValueSetter::EnumValue(e) = self {
             Some(e)
@@ -1320,7 +1400,6 @@ impl ControlValueSetter {
         }
     }
     #[must_use]
-
     pub fn as_rgb(&self) -> Option<(&f64, &f64, &f64)> {
         if let ControlValueSetter::RGB(r, g, b) = self {
             Some((r, g, b))
@@ -1362,6 +1441,9 @@ impl Display for ControlValueSetter {
             }
             ControlValueSetter::RGB(r, g, b) => {
                 write!(f, "RGBValue: ({r}, {g}, {b})")
+            }
+            ControlValueSetter::StringList(s) => {
+                write!(f, "StringListValue: {s}")
             }
         }
     }
@@ -1488,7 +1570,7 @@ pub fn mjpeg_to_rgb(data: &[u8], rgba: bool) -> Result<Vec<u8>, NokhwaError> {
                         src: FrameFormat::MJPEG,
                         destination: "RGB888".to_string(),
                         error: why.to_string(),
-                    })
+                    });
                 }
             }
         }
@@ -1497,7 +1579,7 @@ pub fn mjpeg_to_rgb(data: &[u8], rgba: bool) -> Result<Vec<u8>, NokhwaError> {
                 src: FrameFormat::MJPEG,
                 destination: "RGB888".to_string(),
                 error: why.to_string(),
-            })
+            });
         }
     };
 
@@ -1551,7 +1633,7 @@ pub fn buf_mjpeg_to_rgb(data: &[u8], dest: &mut [u8], rgba: bool) -> Result<(), 
                         src: FrameFormat::MJPEG,
                         destination: "RGB888".to_string(),
                         error: why.to_string(),
-                    })
+                    });
                 }
             }
         }
@@ -1560,7 +1642,7 @@ pub fn buf_mjpeg_to_rgb(data: &[u8], dest: &mut [u8], rgba: bool) -> Result<(), 
                 src: FrameFormat::MJPEG,
                 destination: "RGB888".to_string(),
                 error: why.to_string(),
-            })
+            });
         }
     };
 
@@ -1668,8 +1750,8 @@ pub fn buf_yuyv422_to_rgb(data: &[u8], dest: &mut [u8], rgba: bool) -> Result<()
                     return Err(NokhwaError::ProcessFrameError {
                         src: FrameFormat::YUYV,
                         destination: "RGBA8888".to_string(),
-                        error: "Ran out of RGBA YUYV values! (this should not happen, please file an issue: l1npengtul/nokhwa)".to_string()
-                    })
+                        error: "Ran out of RGBA YUYV values! (this should not happen, please file an issue: l1npengtul/nokhwa)".to_string(),
+                    });
                 }
             }
         }
@@ -1693,8 +1775,8 @@ pub fn buf_yuyv422_to_rgb(data: &[u8], dest: &mut [u8], rgba: bool) -> Result<()
                     return Err(NokhwaError::ProcessFrameError {
                         src: FrameFormat::YUYV,
                         destination: "RGB888".to_string(),
-                        error: "Ran out of RGB YUYV values! (this should not happen, please file an issue: l1npengtul/nokhwa)".to_string()
-                    })
+                        error: "Ran out of RGB YUYV values! (this should not happen, please file an issue: l1npengtul/nokhwa)".to_string(),
+                    });
                 }
             }
         }

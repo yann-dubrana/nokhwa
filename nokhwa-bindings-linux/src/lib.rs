@@ -933,10 +933,7 @@ mod internal {
     use nokhwa_core::buffer::Buffer;
     use nokhwa_core::error::NokhwaError;
     use nokhwa_core::traits::CaptureBackendTrait;
-    use nokhwa_core::types::{
-        ApiBackend, CameraControl, CameraFormat, CameraIndex, CameraInfo, ControlValueSetter,
-        FrameFormat, KnownCameraControl, RequestedFormat, Resolution,
-    };
+    use nokhwa_core::types::{ApiBackend, CameraControl, CameraFormat, CameraIndex, CameraInfo, ControlValueSetter, FrameFormat, FrameRate, KnownCameraControl, RequestedFormat, Resolution};
     use std::borrow::Cow;
     use std::collections::HashMap;
     use std::marker::PhantomData;
@@ -1026,7 +1023,7 @@ mod internal {
         fn compatible_list_by_resolution(
             &mut self,
             fourcc: FrameFormat,
-        ) -> Result<HashMap<Resolution, Vec<u32>>, NokhwaError> {
+        ) -> Result<HashMap<Resolution, Vec<FrameRate>>, NokhwaError> {
             todo!()
         }
 
@@ -1042,11 +1039,11 @@ mod internal {
             todo!()
         }
 
-        fn frame_rate(&self) -> u32 {
+        fn frame_rate(&self) -> FrameRate {
             todo!()
         }
 
-        fn set_frame_rate(&mut self, new_fps: u32) -> Result<(), NokhwaError> {
+        fn set_frame_rate(&mut self, new_fps: FrameRate) -> Result<(), NokhwaError> {
             todo!()
         }
 

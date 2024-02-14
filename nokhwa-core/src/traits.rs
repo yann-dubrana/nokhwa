@@ -29,6 +29,7 @@ use wgpu::{
     Texture as WgpuTexture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
     TextureUsages,
 };
+use crate::types::FrameRate;
 
 /// This trait is for any backend that allows you to grab and take frames from a camera.
 /// Many of the backends are **blocking**, if the camera is occupied the library will block while it waits for it to become available.
@@ -66,7 +67,7 @@ pub trait CaptureBackendTrait {
     fn compatible_list_by_resolution(
         &mut self,
         fourcc: FrameFormat,
-    ) -> Result<HashMap<Resolution, Vec<u32>>, NokhwaError>;
+    ) -> Result<HashMap<Resolution, Vec<FrameRate>>, NokhwaError>;
 
     /// Gets the compatible [`CameraFormat`] of the camera
     /// # Errors
@@ -101,7 +102,7 @@ pub trait CaptureBackendTrait {
     fn set_resolution(&mut self, new_res: Resolution) -> Result<(), NokhwaError>;
 
     /// Gets the current camera framerate (See: [`CameraFormat`]). This will force refresh to the current latest if it has changed.
-    fn frame_rate(&self) -> u32;
+    fn frame_rate(&self) -> FrameRate;
 
     /// Will set the current framerate
     /// This will reset the current stream if used while stream is opened.
@@ -109,7 +110,7 @@ pub trait CaptureBackendTrait {
     /// This will also update the cache.
     /// # Errors
     /// If you started the stream and the camera rejects the new framerate, this will return an error.
-    fn set_frame_rate(&mut self, new_fps: u32) -> Result<(), NokhwaError>;
+    fn set_frame_rate(&mut self, new_fps: FrameRate) -> Result<(), NokhwaError>;
 
     /// Gets the current camera's frame format (See: [`FrameFormat`], [`CameraFormat`]). This will force refresh to the current latest if it has changed.
     fn frame_format(&self) -> FrameFormat;
