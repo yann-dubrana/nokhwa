@@ -58,9 +58,6 @@ impl MediaFoundationCaptureDevice {
         );
 
         let available = mf_device.compatible_format_list()?;
-
-        println!("Available formats: {:?}", available);
-
         let desired = camera_fmt
             .fulfill(&available)
             .ok_or(NokhwaError::InitializeError {
