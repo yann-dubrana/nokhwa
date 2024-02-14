@@ -540,11 +540,12 @@ pub mod wmf {
                     ];
 
                     for (i, windows_type) in windows_types.iter().enumerate() {
-                        if let Ok(windows_pointer) = unsafe { media_type.GetUINT64(windows_type) } {
-                            let numerator = (windows_pointer >> 32) as u32;
-                            let denominator = windows_pointer as u32;
+                        if let Ok(identifier) = unsafe { media_type.GetUINT64(windows_type) } {
+                            let numerator = (identifier >> 32) as u32;
+                            let denominator = identifier as u32;
+                            let value = (numerator / denominator) as u32;
                             if numerator > 1 {
-                                framerates.push(FrameRate::Fraction { windows_pointer, numerator, denominator })
+                                framerates.push(FrameRate::Fraction { identifier, numerator, denominator, value })
                             }
                         };
                     }
@@ -881,11 +882,11 @@ pub mod wmf {
                     };
 
                     let frame_rate = match unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE) } {
-                        Ok(fps) => {
-                            let windows_pointer = fps.clone();
-                            let numerator = (fps >> 32) as u32;
-                            let denominator = fps as u32;
-                            FrameRate::Fraction { windows_pointer, numerator, denominator }
+                        Ok(identifier) => {
+                            let numerator = (identifier >> 32) as u32;
+                            let denominator = identifier as u32;
+                            let value = (numerator / denominator) as u32;
+                            FrameRate::Fraction { identifier, numerator, denominator, value }
                         }
                         Err(why) => {
                             return Err(NokhwaError::GetPropertyError {
@@ -947,26 +948,26 @@ pub mod wmf {
 
             let fps = {
                 let frame_rate_u64 = 0_u64;
-                let mut native: u64 = 0;
+                let mut native_identifier: u64 = 0;
                 let mut bytes: [u8; 8] = frame_rate_u64.to_le_bytes();
                 match format.frame_rate() {
-                    FrameRate::Fraction { windows_pointer, numerator, denominator } => {
-                        native = windows_pointer;
+                    FrameRate::Fraction { identifier, numerator, denominator, value } => {
+                        native_identifier = identifier;
                     }
                     FrameRate::Integer(fps) => {
-                        bytes[4] = fps as u8;
-                        bytes[0] = 0x01;
+                        bytes[7] = fps as u8;
+                        bytes[3] = 0x01;
                     }
                     FrameRate::Float(fps) => {
-                        bytes[4] = fps as u8;
-                        bytes[0] = 0x01;
+                        bytes[7] = fps as u8;
+                        bytes[3] = 0x01;
                     }
                 }
 
-                if native == 0 {
-                    native = u64::from_le_bytes(bytes)
+                if native_identifier == 0 {
+                    native_identifier = u64::from_le_bytes(bytes)
                 }
-                native
+                native_identifier
             };
             let fourcc = frameformat_to_guid(format.format());
             // setting to the new media_type

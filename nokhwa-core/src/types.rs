@@ -1,6 +1,6 @@
 use crate::{error::NokhwaError, pixel_format::FormatDecoder};
 #[cfg(feature = "serialize")]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Borrow,
     cmp::Ordering,
@@ -8,6 +8,12 @@ use std::{
     str::FromStr,
 };
 use std::hash::{Hash, Hasher};
+
+#[cfg(feature = "serialize")]
+pub trait MySerialize : Serialize {}
+
+#[cfg(not(feature = "serialize"))]
+pub trait MySerialize {}
 
 /// Tells the init function what camera format to pick.
 /// - `AbsoluteHighestResolution`: Pick the highest [`Resolution`], then pick the highest frame rate of those provided.
@@ -472,9 +478,10 @@ pub enum FrameRate {
     Float(f32),
     /// The driver reports the frame rate as a fraction (e.g. 2997/1000 FPS)
     Fraction {
-        windows_pointer: u64,
+        identifier: u64,
         numerator: u32,
         denominator: u32,
+        value: u32
     },
 }
 
@@ -487,11 +494,12 @@ impl FrameRate {
         FrameRate::Float(fps)
     }
 
-    pub fn new_fraction(windows_pointer: u64, numerator: u32, denominator: u32) -> Self {
+    pub fn new_fraction(identifier: u64, numerator: u32, denominator: u32, value: u32) -> Self {
         FrameRate::Fraction {
-            windows_pointer,
+            identifier,
             numerator,
             denominator,
+            value
         }
     }
 
@@ -499,7 +507,7 @@ impl FrameRate {
         match self {
             FrameRate::Integer(fps) => *fps as f32,
             FrameRate::Float(fps) => *fps,
-            FrameRate::Fraction { windows_pointer, numerator, denominator } => (*numerator as f32) / (*denominator as f32)
+            FrameRate::Fraction { identifier, numerator, denominator, value } => (*numerator as f32) / (*denominator as f32)
         }
     }
 
@@ -507,7 +515,7 @@ impl FrameRate {
         match self {
             FrameRate::Integer(fps) => *fps,
             FrameRate::Float(fps) => *fps as u32,
-            FrameRate::Fraction { windows_pointer, numerator, denominator } => (*numerator / *denominator).into(),
+            FrameRate::Fraction { identifier, numerator, denominator, value } => (*numerator / *denominator).into(),
         }
     }
 }
@@ -523,10 +531,11 @@ impl Hash for FrameRate {
         match self {
             FrameRate::Integer(fps) => fps.hash(state),
             FrameRate::Float(fps) => fps.to_bits().hash(state),
-            FrameRate::Fraction { windows_pointer, numerator, denominator } => {
-                windows_pointer.hash(state);
+            FrameRate::Fraction { identifier, numerator, denominator, value } => {
+                identifier.hash(state);
                 numerator.hash(state);
                 denominator.hash(state);
+                value.hash(state);
             }
         }
     }
@@ -584,9 +593,10 @@ impl From<f32> for FrameRate {
 impl From<(u64, u32, u32)> for FrameRate {
     fn from(value: (u64, u32, u32)) -> Self {
         FrameRate::Fraction {
-            windows_pointer: value.0,
+            identifier: value.0,
             numerator: value.1,
             denominator: value.2,
+            value: (value.1 / value.2).into()
         }
     }
 }
