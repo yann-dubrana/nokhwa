@@ -11,9 +11,14 @@ fn main() {
     for camera_info in get_cameras() {
         println!("Caméra {:#?}", camera_info.human_name());
 
-        let index: CameraIndex = camera_info.index().clone();
+        let mut index: CameraIndex = camera_info.index().clone();
         let format: RequestedFormat = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
         let mut camera = Camera::new(index, format).unwrap();
+        for camera_format in camera.compatible_camera_formats().unwrap(){
+            let mut index: CameraIndex = camera_info.index().clone();
+            let mut format: RequestedFormat = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(camera_format));
+            let mut camera = Camera::new(index, format).unwrap();
+        }
 
 
 

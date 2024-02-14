@@ -952,7 +952,7 @@ pub mod wmf {
                 let mut bytes: [u8; 8] = frame_rate_u64.to_le_bytes();
                 match format.frame_rate() {
                     FrameRate::Fraction { identifier, numerator, denominator, value } => {
-                        native_identifier = identifier;
+                        native_identifier = ((numerator as u64) << 32) | (denominator as u64);
                     }
                     FrameRate::Integer(fps) => {
                         bytes[7] = fps as u8;
