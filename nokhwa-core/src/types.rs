@@ -1593,8 +1593,8 @@ pub fn mjpeg_to_rgb(data: &[u8], rgba: bool) -> Result<Vec<u8>, NokhwaError> {
         }
     };
 
-    let scanlines_res = jpeg_decompress.read_scanlines_flat();
-    //  assert!(jpeg_decompress.finish_decompress());
+    let scanlines_res = jpeg_decompress.read_scanlines_flat().unwrap();
+    // assert!(jpeg_decompress.finish_decompress());
     if !jpeg_decompress.finish_decompress() {
         return Err(NokhwaError::ProcessFrameError {
             src: FrameFormat::MJPEG,
@@ -1603,14 +1603,15 @@ pub fn mjpeg_to_rgb(data: &[u8], rgba: bool) -> Result<Vec<u8>, NokhwaError> {
         });
     }
 
-    match scanlines_res {
-        Some(pixels) => Ok(pixels),
-        None => Err(NokhwaError::ProcessFrameError {
+    if scanlines_res.is_empty() {
+        return Err(NokhwaError::ProcessFrameError {
             src: FrameFormat::MJPEG,
             destination: "RGB888".to_string(),
-            error: "Failed to get read readlines into RGB888 pixels!".to_string(),
-        }),
+            error: "Failed to read scanlines into RGB888 pixels: received empty pixel buffer.".to_string(),
+        });
     }
+
+    Ok(scanlines_res)
 }
 
 #[cfg(not(all(feature = "mjpeg", not(target_arch = "wasm"))))]
