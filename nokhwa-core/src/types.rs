@@ -1611,6 +1611,7 @@ pub fn mjpeg_to_rgb(data: &[u8], rgba: bool) -> Result<Vec<u8>, NokhwaError> {
         });
     }
 
+
     Ok(scanlines_res)
 }
 
